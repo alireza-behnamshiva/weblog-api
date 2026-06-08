@@ -1,6 +1,6 @@
 # Weblog API
 
-NestJS weblog REST API built with TypeScript, TypeORM, and PostgreSQL.
+NestJS weblog REST API built with TypeScript, TypeORM and PostgreSQL.
 
 ## Features
 
