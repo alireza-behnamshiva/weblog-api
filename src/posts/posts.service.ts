@@ -62,7 +62,7 @@ export class PostsService {
       .leftJoinAndSelect('post.author', 'author')
       .leftJoinAndSelect('post.category', 'category')
       .leftJoinAndSelect('post.tags', 'tag')
-      .orderBy('post.createdAt', 'DESC')
+      .orderBy('post.createdAt', query.sort === 'oldest' ? 'ASC' : 'DESC')
       .skip((page - 1) * limit)
       .take(limit);
 
@@ -81,8 +81,24 @@ export class PostsService {
       });
     }
 
+    if (query.categorySlug) {
+      queryBuilder.andWhere('category.slug = :categorySlug', {
+        categorySlug: query.categorySlug,
+      });
+    }
+
     if (query.status) {
       queryBuilder.andWhere('post.status = :status', { status: query.status });
+    }
+
+    if (query.authorId) {
+      queryBuilder.andWhere('post.authorId = :authorId', {
+        authorId: query.authorId,
+      });
+    }
+
+    if (query.tagId) {
+      queryBuilder.andWhere('tag.id = :tagId', { tagId: query.tagId });
     }
 
     if (query.tagSlug) {
@@ -171,6 +187,23 @@ export class PostsService {
     const post = await this.findOne(id);
     this.assertAuthor(post, authorId);
     await this.postsRepository.softRemove(post);
+  }
+
+  async restoreForAuthor(id: string, authorId: string): Promise<Post> {
+    const post = await this.postsRepository.findOne({
+      where: { id },
+      relations: { author: true, category: true, tags: true },
+      withDeleted: true,
+    });
+
+    if (!post) {
+      throw new NotFoundException('Post not found');
+    }
+
+    this.assertAuthor(post, authorId);
+    await this.postsRepository.recover(post);
+
+    return this.findOne(id);
   }
 
   private assertAuthor(post: Post, authorId: string): void {

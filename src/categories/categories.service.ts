@@ -5,8 +5,13 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import {
+  buildPaginationMeta,
+  PaginatedResult,
+} from '../common/dto/paginated-response.dto';
 import { toSlug } from '../common/slug';
 import { Category } from './category.entity';
+import { CategoryQueryDto } from './dto/category-query.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 
@@ -26,8 +31,28 @@ export class CategoriesService {
     return this.categoriesRepository.save(category);
   }
 
-  findAll(): Promise<Category[]> {
-    return this.categoriesRepository.find({ order: { name: 'ASC' } });
+  async findAll(query: CategoryQueryDto): Promise<PaginatedResult<Category>> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const queryBuilder = this.categoriesRepository
+      .createQueryBuilder('category')
+      .orderBy('category.name', 'ASC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    if (query.search) {
+      queryBuilder.andWhere(
+        '(category.name ILIKE :search OR category.slug ILIKE :search OR category.description ILIKE :search)',
+        { search: `%${query.search}%` },
+      );
+    }
+
+    const [items, total] = await queryBuilder.getManyAndCount();
+
+    return {
+      items,
+      meta: buildPaginationMeta(page, limit, total),
+    };
   }
 
   async findOne(id: string): Promise<Category> {

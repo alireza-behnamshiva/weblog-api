@@ -6,6 +6,7 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { toUserResponse } from '../users/dto/user-response.dto';
 
 @ApiTags('Auth')
 @Controller('auth')
@@ -29,6 +30,6 @@ export class AuthController {
   @ApiOperation({ summary: 'Current user profile' })
   @Get('me')
   me(@CurrentUser() user: AuthenticatedUser) {
-    return this.authService.getProfile(user.id);
+    return this.authService.getProfile(user.id).then(toUserResponse);
   }
 }

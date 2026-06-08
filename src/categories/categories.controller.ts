@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -14,6 +15,11 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { UserRole } from '../users/user.entity';
 import { CategoriesService } from './categories.service';
+import { CategoryQueryDto } from './dto/category-query.dto';
+import {
+  toCategoryResponse,
+  toPaginatedCategoryResponse,
+} from './dto/category-response.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 
@@ -28,25 +34,29 @@ export class CategoriesController {
   @Post()
   @ApiOperation({ summary: 'Create category' })
   create(@Body() createCategoryDto: CreateCategoryDto) {
-    return this.categoriesService.create(createCategoryDto);
+    return this.categoriesService
+      .create(createCategoryDto)
+      .then(toCategoryResponse);
   }
 
   @Get()
   @ApiOperation({ summary: 'List categories' })
-  findAll() {
-    return this.categoriesService.findAll();
+  findAll(@Query() query: CategoryQueryDto) {
+    return this.categoriesService
+      .findAll(query)
+      .then(toPaginatedCategoryResponse);
   }
 
   @Get('slug/:slug')
   @ApiOperation({ summary: 'Get category by slug' })
   findBySlug(@Param('slug') slug: string) {
-    return this.categoriesService.findBySlug(slug);
+    return this.categoriesService.findBySlug(slug).then(toCategoryResponse);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get category by ID' })
   findOne(@Param('id') id: string) {
-    return this.categoriesService.findOne(id);
+    return this.categoriesService.findOne(id).then(toCategoryResponse);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -58,7 +68,9 @@ export class CategoriesController {
     @Param('id') id: string,
     @Body() updateCategoryDto: UpdateCategoryDto,
   ) {
-    return this.categoriesService.update(id, updateCategoryDto);
+    return this.categoriesService
+      .update(id, updateCategoryDto)
+      .then(toCategoryResponse);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

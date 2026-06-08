@@ -10,12 +10,20 @@ NestJS weblog REST API built with TypeScript, TypeORM, and PostgreSQL.
 - Owner-only post updates/deletes
 - Admin-only user/category/tag management
 - Comment ownership with admin moderation access
+- Nested comments
+- Comment moderation workflow
+- Soft delete and restore for posts/comments
+- Pagination, filtering, and search
 - Posts, categories, tags, users, and comments CRUD
 - Slug generation and normalization
 - TypeORM migrations
 - Idempotent database seeding
 - Swagger/OpenAPI documentation
 - Global validation and normalized error responses
+- Environment variable validation
+- CORS configuration
+- Request logging
+- Rate limiting
 
 ## Requirements
 
@@ -58,6 +66,9 @@ DB_NAME=weblog_api
 
 JWT_SECRET=change-me-in-development
 JWT_EXPIRES_IN=1d
+CORS_ORIGIN=http://localhost:5173
+THROTTLE_TTL=60000
+THROTTLE_LIMIT=100
 
 SEED_USER_NAME=Admin User
 SEED_USER_EMAIL=admin@example.com
@@ -128,8 +139,8 @@ GET  /auth/me
 Users:
 
 ```text
-POST   /users
-GET    /users
+POST   /users                 admin
+GET    /users                 admin, supports page, limit, search, role
 GET    /users/:id
 PATCH  /users/:id
 DELETE /users/:id
@@ -138,44 +149,48 @@ DELETE /users/:id
 Categories:
 
 ```text
-POST   /categories
-GET    /categories
+POST   /categories            admin
+GET    /categories            supports page, limit, search
 GET    /categories/:id
 GET    /categories/slug/:slug
-PATCH  /categories/:id
-DELETE /categories/:id
+PATCH  /categories/:id        admin
+DELETE /categories/:id        admin
 ```
 
 Tags:
 
 ```text
-POST   /tags
-GET    /tags
+POST   /tags                  admin
+GET    /tags                  supports page, limit, search
 GET    /tags/:id
 GET    /tags/slug/:slug
-PATCH  /tags/:id
-DELETE /tags/:id
+PATCH  /tags/:id              admin
+DELETE /tags/:id              admin
 ```
 
 Posts:
 
 ```text
-POST   /posts
-GET    /posts
+POST   /posts                 authenticated
+GET    /posts                 supports page, limit, search, categoryId, categorySlug, tagId, tagSlug, authorId, status, sort
 GET    /posts/:id
 GET    /posts/slug/:slug
-PATCH  /posts/:id
-DELETE /posts/:id
+PATCH  /posts/:id             owner only
+DELETE /posts/:id             owner only
+PATCH  /posts/:id/restore     owner only
 ```
 
 Comments:
 
 ```text
-POST   /comments
-GET    /comments
-GET    /comments/:id
-PATCH  /comments/:id
-DELETE /comments/:id
+POST   /comments                       authenticated, supports parentId replies
+GET    /comments                       approved only, supports page, limit, search, postId, authorId, parentId
+GET    /comments/moderation            admin, supports page, limit, search, postId, authorId, parentId, status
+GET    /comments/:id                   approved only
+PATCH  /comments/:id                   owner or admin
+PATCH  /comments/:id/moderate          admin
+DELETE /comments/:id                   owner or admin
+PATCH  /comments/:id/restore           owner or admin
 ```
 
 ## Authorization Rules
@@ -184,8 +199,9 @@ DELETE /comments/:id
 - A regular user can create posts and comments.
 - A regular user can update/delete only their own posts.
 - A regular user can update/delete only their own comments.
-- Admins can manage users, categories, tags, and comments.
+- Admins can manage users, categories, tags, comments, and comment moderation.
 - Admins cannot update/delete posts owned by other users or admins.
+- Comments are pending by default and only approved comments are public.
 
 Use this header for protected endpoints:
 

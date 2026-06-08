@@ -8,6 +8,16 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 
+const getCorsOrigin = (): boolean | string[] => {
+  const corsOrigin = process.env.CORS_ORIGIN;
+
+  if (!corsOrigin) {
+    return true;
+  }
+
+  return corsOrigin.split(',').map((origin) => origin.trim());
+};
+
 const formatValidationErrors = (errors: ValidationError[]): string[] =>
   errors.flatMap((error) => {
     const messages = Object.values(error.constraints ?? {});
@@ -18,6 +28,10 @@ const formatValidationErrors = (errors: ValidationError[]): string[] =>
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  app.enableCors({
+    origin: getCorsOrigin(),
+    credentials: true,
+  });
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Weblog API')
     .setDescription('NestJS weblog API using TypeORM and PostgreSQL.')

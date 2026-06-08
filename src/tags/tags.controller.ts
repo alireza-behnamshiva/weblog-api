@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -14,6 +15,8 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { UserRole } from '../users/user.entity';
 import { CreateTagDto } from './dto/create-tag.dto';
+import { TagQueryDto } from './dto/tag-query.dto';
+import { toPaginatedTagResponse, toTagResponse } from './dto/tag-response.dto';
 import { UpdateTagDto } from './dto/update-tag.dto';
 import { TagsService } from './tags.service';
 
@@ -28,25 +31,25 @@ export class TagsController {
   @Post()
   @ApiOperation({ summary: 'Create tag' })
   create(@Body() createTagDto: CreateTagDto) {
-    return this.tagsService.create(createTagDto);
+    return this.tagsService.create(createTagDto).then(toTagResponse);
   }
 
   @Get()
   @ApiOperation({ summary: 'List tags' })
-  findAll() {
-    return this.tagsService.findAll();
+  findAll(@Query() query: TagQueryDto) {
+    return this.tagsService.findAll(query).then(toPaginatedTagResponse);
   }
 
   @Get('slug/:slug')
   @ApiOperation({ summary: 'Get tag by slug' })
   findBySlug(@Param('slug') slug: string) {
-    return this.tagsService.findBySlug(slug);
+    return this.tagsService.findBySlug(slug).then(toTagResponse);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get tag by ID' })
   findOne(@Param('id') id: string) {
-    return this.tagsService.findOne(id);
+    return this.tagsService.findOne(id).then(toTagResponse);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -55,7 +58,7 @@ export class TagsController {
   @Patch(':id')
   @ApiOperation({ summary: 'Update tag' })
   update(@Param('id') id: string, @Body() updateTagDto: UpdateTagDto) {
-    return this.tagsService.update(id, updateTagDto);
+    return this.tagsService.update(id, updateTagDto).then(toTagResponse);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

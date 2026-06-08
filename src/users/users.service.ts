@@ -5,7 +5,12 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import {
+  buildPaginationMeta,
+  PaginatedResult,
+} from '../common/dto/paginated-response.dto';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UserQueryDto } from './dto/user-query.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { User, UserRole } from './user.entity';
 
@@ -22,8 +27,32 @@ export class UsersService {
     );
   }
 
-  findAll(): Promise<User[]> {
-    return this.usersRepository.find({ order: { createdAt: 'DESC' } });
+  async findAll(query: UserQueryDto): Promise<PaginatedResult<User>> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const queryBuilder = this.usersRepository
+      .createQueryBuilder('user')
+      .orderBy('user.createdAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    if (query.search) {
+      queryBuilder.andWhere(
+        '(user.name ILIKE :search OR user.email ILIKE :search)',
+        { search: `%${query.search}%` },
+      );
+    }
+
+    if (query.role) {
+      queryBuilder.andWhere('user.role = :role', { role: query.role });
+    }
+
+    const [items, total] = await queryBuilder.getManyAndCount();
+
+    return {
+      items,
+      meta: buildPaginationMeta(page, limit, total),
+    };
   }
 
   async findOne(id: string): Promise<User> {

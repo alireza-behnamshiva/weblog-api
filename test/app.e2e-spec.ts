@@ -23,6 +23,18 @@ type PostResponse = {
   slug: string;
 };
 
+type CommentResponse = {
+  id: string;
+  content: string;
+  status: 'pending' | 'approved' | 'rejected';
+  parentId?: string | null;
+  children?: CommentResponse[];
+};
+
+type PaginatedCommentResponse = {
+  items: CommentResponse[];
+};
+
 const formatValidationErrors = (errors: ValidationError[]): string[] =>
   errors.flatMap((error) => [
     ...Object.values(error.constraints ?? {}),
@@ -228,5 +240,139 @@ describe('Weblog API (e2e)', () => {
     const tagBySlug = bySlug.body as SluggedResourceResponse;
 
     expect(tagBySlug.id).toBe(tagBody.id);
+  });
+
+  it('supports nested comment moderation', async () => {
+    const user = await register(`comment-user-${suffix}@example.com`);
+    const adminEmail = `comment-admin-${suffix}@example.com`;
+
+    await register(adminEmail);
+    await promoteToAdmin(adminEmail);
+    const admin = await login(adminEmail);
+
+    const category = await request(httpServer)
+      .post('/categories')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ name: `Comment Category ${suffix}` })
+      .expect(201);
+    const categoryBody = category.body as SluggedResourceResponse;
+
+    const post = await request(httpServer)
+      .post('/posts')
+      .set('Authorization', `Bearer ${user.accessToken}`)
+      .send({
+        title: `Commented Post ${suffix}`,
+        excerpt: 'This excerpt is long enough.',
+        content: 'This content is long enough for validation.',
+        categoryId: categoryBody.id,
+        status: 'published',
+      })
+      .expect(201);
+    const postBody = post.body as PostResponse;
+
+    const rootCommentResponse = await request(httpServer)
+      .post('/comments')
+      .set('Authorization', `Bearer ${user.accessToken}`)
+      .send({
+        authorName: 'Comment User',
+        content: 'Root comment waiting for approval.',
+        postId: postBody.id,
+      })
+      .expect(201);
+    const rootComment = rootCommentResponse.body as CommentResponse;
+
+    expect(rootComment.status).toBe('pending');
+
+    const moderationList = await request(httpServer)
+      .get('/comments/moderation?status=pending')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .expect(200);
+
+    const moderationBody = moderationList.body as PaginatedCommentResponse;
+
+    expect(
+      moderationBody.items.some((comment) => comment.id === rootComment.id),
+    ).toBe(true);
+
+    await request(httpServer)
+      .patch(`/comments/${rootComment.id}/moderate`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ status: 'approved' })
+      .expect(200);
+
+    const replyResponse = await request(httpServer)
+      .post('/comments')
+      .set('Authorization', `Bearer ${user.accessToken}`)
+      .send({
+        authorName: 'Comment User',
+        content: 'Approved nested reply.',
+        postId: postBody.id,
+        parentId: rootComment.id,
+      })
+      .expect(201);
+    const reply = replyResponse.body as CommentResponse;
+
+    await request(httpServer)
+      .patch(`/comments/${reply.id}/moderate`)
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ status: 'approved' })
+      .expect(200);
+
+    const publicComments = await request(httpServer)
+      .get(`/comments?postId=${postBody.id}`)
+      .expect(200);
+    const publicCommentsBody = publicComments.body as PaginatedCommentResponse;
+    const comments = publicCommentsBody.items;
+    const publicRoot = comments.find(
+      (comment) => comment.id === rootComment.id,
+    );
+
+    expect(publicRoot?.children?.[0]).toMatchObject({
+      id: reply.id,
+      parentId: rootComment.id,
+      status: 'approved',
+    });
+  });
+
+  it('restores soft-deleted owner posts', async () => {
+    const user = await register(`restore-user-${suffix}@example.com`);
+    const adminEmail = `restore-admin-${suffix}@example.com`;
+
+    await register(adminEmail);
+    await promoteToAdmin(adminEmail);
+    const admin = await login(adminEmail);
+
+    const category = await request(httpServer)
+      .post('/categories')
+      .set('Authorization', `Bearer ${admin.accessToken}`)
+      .send({ name: `Restore Category ${suffix}` })
+      .expect(201);
+    const categoryBody = category.body as SluggedResourceResponse;
+
+    const post = await request(httpServer)
+      .post('/posts')
+      .set('Authorization', `Bearer ${user.accessToken}`)
+      .send({
+        title: `Restorable Post ${suffix}`,
+        excerpt: 'This excerpt is long enough.',
+        content: 'This content is long enough for validation.',
+        categoryId: categoryBody.id,
+      })
+      .expect(201);
+    const postBody = post.body as PostResponse;
+
+    await request(httpServer)
+      .delete(`/posts/${postBody.id}`)
+      .set('Authorization', `Bearer ${user.accessToken}`)
+      .expect(200);
+
+    await request(httpServer).get(`/posts/${postBody.id}`).expect(404);
+
+    const restored = await request(httpServer)
+      .patch(`/posts/${postBody.id}/restore`)
+      .set('Authorization', `Bearer ${user.accessToken}`)
+      .expect(200);
+
+    expect((restored.body as PostResponse).id).toBe(postBody.id);
   });
 });

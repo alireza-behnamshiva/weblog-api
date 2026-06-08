@@ -8,6 +8,7 @@ import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
 import { Repository } from 'typeorm';
+import { toUserResponse } from '../users/dto/user-response.dto';
 import { User } from '../users/user.entity';
 import { getJwtExpiresIn, getJwtSecret } from './auth.config';
 import { LoginDto } from './dto/login.dto';
@@ -100,15 +101,7 @@ export class AuthService {
     return {
       accessToken,
       tokenType: 'Bearer',
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        bio: user.bio,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt,
-      },
+      user: toUserResponse(user),
     };
   }
 }

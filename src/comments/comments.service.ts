@@ -1,14 +1,21 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import {
+  buildPaginationMeta,
+  PaginatedResult,
+} from '../common/dto/paginated-response.dto';
 import { Post } from '../posts/post.entity';
 import { User, UserRole } from '../users/user.entity';
-import { Comment } from './comment.entity';
+import { Comment, CommentStatus } from './comment.entity';
+import { CommentQueryDto } from './dto/comment-query.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
+import { ModerateCommentDto } from './dto/moderate-comment.dto';
 import { UpdateCommentDto } from './dto/update-comment.dto';
 
 @Injectable()
@@ -26,10 +33,17 @@ export class CommentsService {
     createCommentDto: CreateCommentDto,
     authorId: string,
   ): Promise<Comment> {
-    const [post, author] = await Promise.all([
+    const [post, author, parent] = await Promise.all([
       this.findPost(createCommentDto.postId),
       this.findAuthor(authorId),
+      createCommentDto.parentId
+        ? this.findParent(createCommentDto.parentId)
+        : undefined,
     ]);
+
+    if (parent && parent.postId !== post.id) {
+      throw new BadRequestException('Parent comment must belong to the post');
+    }
 
     const comment = this.commentsRepository.create({
       authorName: createCommentDto.authorName,
@@ -37,22 +51,117 @@ export class CommentsService {
       content: createCommentDto.content,
       post,
       author,
+      parent,
     });
 
     return this.commentsRepository.save(comment);
   }
 
-  findAll(): Promise<Comment[]> {
-    return this.commentsRepository.find({
-      relations: { post: true, author: true },
-      order: { createdAt: 'DESC' },
+  async findAllApproved(
+    query: CommentQueryDto,
+  ): Promise<PaginatedResult<Comment>> {
+    return this.findAll(query, {
+      status: CommentStatus.Approved,
+      rootOnlyByDefault: true,
     });
+  }
+
+  async findAllForModeration(
+    query: CommentQueryDto,
+  ): Promise<PaginatedResult<Comment>> {
+    return this.findAll(query, {
+      status: query.status,
+      rootOnlyByDefault: false,
+    });
+  }
+
+  async findOneApproved(id: string): Promise<Comment> {
+    const comment = await this.commentsRepository.findOne({
+      where: { id, status: CommentStatus.Approved },
+      relations: { post: true, author: true, children: true },
+    });
+
+    if (!comment) {
+      throw new NotFoundException('Comment not found');
+    }
+
+    comment.children = (comment.children ?? []).filter(
+      (child) => child.status === CommentStatus.Approved,
+    );
+
+    return comment;
+  }
+
+  async findAll(
+    query: CommentQueryDto,
+    options: {
+      status?: CommentStatus;
+      rootOnlyByDefault: boolean;
+    },
+  ): Promise<PaginatedResult<Comment>> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const queryBuilder = this.commentsRepository
+      .createQueryBuilder('comment')
+      .leftJoinAndSelect('comment.post', 'post')
+      .leftJoinAndSelect('comment.author', 'author')
+      .leftJoinAndSelect(
+        'comment.children',
+        'child',
+        options.status ? 'child.status = :childStatus' : undefined,
+        options.status ? { childStatus: options.status } : undefined,
+      )
+      .leftJoinAndSelect('child.author', 'childAuthor')
+      .orderBy('comment.createdAt', 'DESC')
+      .addOrderBy('child.createdAt', 'ASC')
+      .skip((page - 1) * limit)
+      .take(limit);
+
+    if (options.status) {
+      queryBuilder.andWhere('comment.status = :status', {
+        status: options.status,
+      });
+    }
+
+    if (query.search) {
+      queryBuilder.andWhere(
+        '(comment.authorName ILIKE :search OR comment.authorEmail ILIKE :search OR comment.content ILIKE :search)',
+        { search: `%${query.search}%` },
+      );
+    }
+
+    if (query.postId) {
+      queryBuilder.andWhere('comment.postId = :postId', {
+        postId: query.postId,
+      });
+    }
+
+    if (query.authorId) {
+      queryBuilder.andWhere('comment.authorId = :authorId', {
+        authorId: query.authorId,
+      });
+    }
+
+    if (query.parentId) {
+      queryBuilder.andWhere('comment.parentId = :parentId', {
+        parentId: query.parentId,
+      });
+    } else if (options.rootOnlyByDefault) {
+      queryBuilder.andWhere('comment.parentId IS NULL');
+    }
+
+    const [items, total] = await queryBuilder.getManyAndCount();
+
+    return {
+      items,
+      meta: buildPaginationMeta(page, limit, total),
+    };
   }
 
   async findOne(id: string): Promise<Comment> {
     const comment = await this.commentsRepository.findOne({
       where: { id },
-      relations: { post: true, author: true },
+      relations: { post: true, author: true, children: true },
     });
 
     if (!comment) {
@@ -60,6 +169,19 @@ export class CommentsService {
     }
 
     return comment;
+  }
+
+  async moderate(
+    id: string,
+    moderateCommentDto: ModerateCommentDto,
+  ): Promise<Comment> {
+    const comment = await this.findOne(id);
+
+    return this.commentsRepository.save(
+      this.commentsRepository.merge(comment, {
+        status: moderateCommentDto.status,
+      }),
+    );
   }
 
   async updateForAuthor(
@@ -82,6 +204,26 @@ export class CommentsService {
     const comment = await this.findOne(id);
     this.assertAuthorOrAdmin(comment, currentUser);
     await this.commentsRepository.softRemove(comment);
+  }
+
+  async restoreForAuthor(
+    id: string,
+    currentUser: { id: string; role: UserRole },
+  ): Promise<Comment> {
+    const comment = await this.commentsRepository.findOne({
+      where: { id },
+      relations: { author: true, post: true },
+      withDeleted: true,
+    });
+
+    if (!comment) {
+      throw new NotFoundException('Comment not found');
+    }
+
+    this.assertAuthorOrAdmin(comment, currentUser);
+    await this.commentsRepository.recover(comment);
+
+    return this.findOne(id);
   }
 
   private assertAuthorOrAdmin(
@@ -116,5 +258,15 @@ export class CommentsService {
     }
 
     return author;
+  }
+
+  private async findParent(id: string): Promise<Comment> {
+    const parent = await this.commentsRepository.findOne({ where: { id } });
+
+    if (!parent) {
+      throw new NotFoundException('Parent comment not found');
+    }
+
+    return parent;
   }
 }
